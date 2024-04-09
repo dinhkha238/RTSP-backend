@@ -21,6 +21,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+if not os.path.exists('./videos'):
+    os.mkdir('./videos')
 app.mount("/videos", StaticFiles(directory="videos"), name="videos")
 
 @app.post("/convert")
