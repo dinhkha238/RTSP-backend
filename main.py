@@ -69,9 +69,20 @@ async def get_list_rtsp(request: Request):
 
 # post
 @app.post("/stop-ffmpeg")
-def post_stop_ffmpeg(rtsp: Rtsp):
+async def post_stop_ffmpeg(rtsp: Rtsp,request: Request):
     ip_cam = cut_ip_address(rtsp.rtsp)
-    stop_ffmpeg_by_ip(ip_cam,running_processes)
+    url_image = stop_ffmpeg_by_ip(ip_cam,running_processes)
+    if url_image:
+        token = request.headers.get("Authorization")
+        requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+        data_user = requests.get(f"{secret_url_api_cxview}/prod/api/v1/user-management/get-profile", headers={"Authorization": token},verify=False)
+        data_rtsp = await collect_camera.find_one({"email": data_user.json()["data"]["email"]})
+        for rtsp_item in data_rtsp["rtsp"]:
+            if rtsp_item["link"] == rtsp.rtsp:
+                rtsp_item["image_lastest"] = url_image
+                break
+        await collect_camera.update_one({"email": data_user.json()["data"]["email"]}, {"$set": data_rtsp})
+        return {"url_image":url_image}
 
 @app.post("/convert")
 def post_start_conversion(rtsp: Rtsp):

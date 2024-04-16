@@ -1,6 +1,19 @@
 import os
 import subprocess
+
+from dotenv import load_dotenv
 import cv2
+import ffmpeg
+from minio import Minio
+from minio.error import S3Error
+
+load_dotenv()
+
+
+# Thông tin kết nối đến MinIO
+minio_endpoint = os.environ.get('SECURITY_MINIO_ENDPOINT')
+minio_access_key = os.environ.get('SECURITY_MINIO_ACCESS_KEY')
+minio_secret_key = os.environ.get('SECURITY_MINIO_SECRET_KEY')
 
 def cut_ip_address(url):
     start_index = url.find('@') + 1
@@ -54,14 +67,23 @@ def cleanup_folder(folder_path):
 
 # Function to stop a running process
 def stop_ffmpeg_by_ip(ip_cam,running_processes):
+    minio_bucket_name = "rtsp"
+    minio_client = Minio(minio_endpoint,
+                        access_key=minio_access_key,
+                        secret_key=minio_secret_key,
+                        secure=False)
     if ip_cam in running_processes:
         process = running_processes[ip_cam]
         process.terminate()
         del running_processes[ip_cam]
+        files = os.listdir(os.path.join("videos",ip_cam))
+        last_video_file = os.path.join("videos", ip_cam, files[-1])
+        cut_image_from_video(minio_client,minio_bucket_name,last_video_file,ip_cam)
+        url = get_url(minio_client, minio_bucket_name, ip_cam + "_image_lastest.jpg")
         cleanup_folder(ip_cam)
-        return {"message": f"Process for {ip_cam} has been terminated."}
+        return url
     else:
-        return {"message": f"No process found for {ip_cam}."}
+        return None
 
 def check_rtsp_online(rtsp_url):
     cap = cv2.VideoCapture(rtsp_url)
@@ -69,3 +91,24 @@ def check_rtsp_online(rtsp_url):
         return False
     else:
         return True
+    
+def cut_image_from_video(minio_client,minio_bucket_name,video_file_path,ip_cam):
+    # Sử dụng ffmpeg để cắt ảnh từ video
+    (
+        ffmpeg.input(video_file_path)
+        .output(os.path.join("videos",ip_cam,"image_lastest.jpg"), vframes=1, format='image2', vf='select=eq(n\,0)')
+        .run()
+    )
+    try:
+        if not minio_client.bucket_exists(minio_bucket_name):
+            minio_client.make_bucket(minio_bucket_name)
+        minio_client.fput_object(minio_bucket_name, ip_cam + "_image_lastest.jpg", os.path.join("videos",ip_cam,"image_lastest.jpg"))
+        print("File uploaded successfully!")
+    except S3Error as err:
+        print(err)
+
+def get_url(minio_client, bucket, name_file):
+        url = minio_client.presigned_get_object(
+                bucket, name_file 
+            )
+        return url
